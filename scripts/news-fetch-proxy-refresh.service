@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh private news proxy subscription
+After=news-fetch-proxy.service
+Requires=news-fetch-proxy.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/news-fetch/scripts/configure-proxy.py --refresh
+TimeoutStartSec=2min
+UMask=0077

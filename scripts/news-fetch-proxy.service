@@ -1,0 +1,21 @@
+[Unit]
+Description=Isolated outbound proxy for AI news collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=news-fetch-proxy
+Group=news-fetch-proxy
+ExecStart=/usr/local/bin/mihomo -d /var/lib/news-fetch-proxy -f /etc/news-fetch-proxy/config.yaml
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/news-fetch-proxy
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

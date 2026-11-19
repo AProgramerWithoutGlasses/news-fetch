@@ -1,6 +1,6 @@
 [Unit]
 Description=AI news collector and daily report (Asia/Shanghai 08:00)
-After=network-online.target
+After=network-online.target news-fetch-proxy.service
 Wants=network-online.target
 
 [Service]

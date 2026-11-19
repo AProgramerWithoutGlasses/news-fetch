@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh news proxy subscription daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

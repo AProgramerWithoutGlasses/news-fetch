@@ -74,6 +74,14 @@ Windows 可运行 `powershell -ExecutionPolicy Bypass -File scripts/install-wind
 
 不自动使用电脑上的通用 `OPENAI_API_KEY`，避免调用未指定的服务。未配置摘要接口时，日报保留原文标题/摘录和中文结构，不会假装已生成中文摘要或完成事实核查。
 
+### 独立出站代理（可选）
+
+服务器可使用独立的 `news-fetch-proxy.service`，需要预装 `/usr/local/bin/mihomo` 与 `python3-yaml`。代理只监听 `127.0.0.1:17890`，仅新闻程序的 `.env` 配置 `HTTPS_PROXY`/`HTTP_PROXY` 指向它，`NO_PROXY=127.0.0.1,localhost`；不会修改服务器默认网络或其他应用。
+
+订阅 URL 存放在 `/etc/news-fetch-proxy/subscription.url`（root 专用、600 权限）；节点配置存放在同目录 `config.yaml`（root:news-fetch-proxy、640 权限），目录权限 750。不要放入仓库、日志或公开网页。`scripts/configure-proxy.py` 只提取节点字段，忽略订阅自带的规则、控制端口和其他配置；验证配置后原子替换。
+
+`news-fetch-proxy-refresh.timer` 每天北京时间 03:30 左右通过现有代理刷新订阅，失败时保留旧配置；`NEWS-AUTO` 每五分钟检查节点延迟并自动选择可用节点。刷新尽量复用当前可用节点，降低启动期间连接失败。代理可解决部分网络不可达问题，但不会自动绕过站点验证码或登录限制，HTTP 403 仍会如实标注。
+
 ## 稳定性与排障
 
 - 每次网络请求 15 秒超时，最多 3 次尝试，仅网络错误、429 和部分 5xx 重试；同一主机限速，每轮采集限制约 10 分钟。

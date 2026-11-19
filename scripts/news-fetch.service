@@ -1,0 +1,22 @@
+[Unit]
+Description=AI news collector and daily report (Asia/Shanghai 08:00)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=news-fetch
+Group=news-fetch
+WorkingDirectory=/opt/news-fetch
+ExecStart=/usr/bin/python3 -m news_fetch tick
+Environment=PYTHONUNBUFFERED=1
+TimeoutStartSec=15min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/news-fetch/data /opt/news-fetch/reports
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

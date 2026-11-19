@@ -1,0 +1,27 @@
+services:
+  collector:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - news-data:/app/data
+      - news-reports:/app/reports
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,datetime,pathlib; h=json.loads(pathlib.Path('/app/reports/health.json').read_text()); assert (datetime.datetime.now(datetime.timezone.utc)-datetime.datetime.fromisoformat(h['last_collect'])).total_seconds()<3600"]
+      interval: 5m
+      timeout: 10s
+      start_period: 10m
+      retries: 2
+  web:
+    build: .
+    command: ["python", "-m", "news_fetch", "serve", "--host", "0.0.0.0"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - news-reports:/app/reports:ro
+      - web-data:/app/data
+volumes:
+  news-data:
+  news-reports:
+  web-data:

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check AI collection/report schedule every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+AccuracySec=1s
+Unit=news-fetch.service
+
+[Install]
+WantedBy=timers.target

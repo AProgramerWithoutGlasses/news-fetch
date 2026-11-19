@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "news-fetch"
+version = "0.1.0"
+description = "有覆盖状态的 AI 新闻与逆向动态日报"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+news-fetch = "news_fetch.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["news_fetch*"]

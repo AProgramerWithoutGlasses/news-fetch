@@ -1,0 +1,21 @@
+[Unit]
+Description=AI news report viewer (loopback only)
+After=network.target
+
+[Service]
+Type=simple
+User=news-fetch
+Group=news-fetch
+WorkingDirectory=/opt/news-fetch
+ExecStart=/usr/bin/python3 -m news_fetch serve --host 127.0.0.1 --port 8787
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/news-fetch/data /opt/news-fetch/reports
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

@@ -34,6 +34,10 @@ class Database:
             with self.conn:
                 self.conn.execute("ALTER TABLE cache ADD COLUMN updated_at TEXT")
 
+        if "official_only" not in [row[1] for row in self.conn.execute("PRAGMA table_info(fetches)")]:
+            with self.conn:
+                self.conn.execute("ALTER TABLE fetches ADD COLUMN official_only INTEGER NOT NULL DEFAULT 0")
+
     def cache_get(self, key):
         return self.conn.execute("SELECT * FROM cache WHERE key=?", (key,)).fetchone()
 
@@ -52,7 +56,8 @@ class Database:
                     continue
                 self.conn.execute("""INSERT INTO items VALUES (?,?,?,?,?,?,?,?,?,?)
                   ON CONFLICT(source,source_id) DO UPDATE SET title=excluded.title,text=excluded.text,
-                  url=excluded.url,last_seen=excluded.last_seen""",
+                  url=excluded.url,last_seen=excluded.last_seen,published_at=excluded.published_at,
+                  discussion_url=excluded.discussion_url,provenance=excluded.provenance""",
                   (item.source, item.source_id, item.title, url, stamp(published), item.text[:5000],
                    canonical_url(item.discussion_url), item.provenance, seen, seen))
                 count += 1
@@ -60,14 +65,17 @@ class Database:
 
     def record_fetch(self, source, started, status, count, detail):
         with self.conn:
-            self.conn.execute("INSERT INTO fetches(source,started_at,finished_at,status,count,detail) VALUES (?,?,?,?,?,?)",
-                              (source, stamp(started), stamp(now()), status, count, detail))
+            self.conn.execute("INSERT INTO fetches(source,started_at,finished_at,status,count,detail,official_only) VALUES (?,?,?,?,?,?,?)",
+                              (source, stamp(started), stamp(now()), status, count, detail, source in ("X", "Linux.do")))
 
     def items(self, start, end):
-        return [dict(row) for row in self.conn.execute("SELECT * FROM items WHERE published_at>=? AND published_at<? ORDER BY published_at DESC", (stamp(start), stamp(end)))]
+        return [dict(row) for row in self.conn.execute("""SELECT * FROM items WHERE published_at>=? AND published_at<?
+          AND (source != 'X' OR provenance='official-api')
+          AND (source != 'Linux.do' OR provenance='direct')
+          ORDER BY published_at DESC""", (stamp(start), stamp(end)))]
 
     def fetches(self, start, end):
-        return [dict(row) for row in self.conn.execute("SELECT * FROM fetches WHERE finished_at>=? AND started_at<=? ORDER BY id", (stamp(start), stamp(end)))]
+        return [dict(row) for row in self.conn.execute("SELECT * FROM fetches WHERE finished_at>=? AND started_at<=? AND (source NOT IN ('Linux.do','X') OR official_only=1) ORDER BY id", (stamp(start), stamp(end)))]
 
     def get(self, key):
         row = self.conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import os
-import re
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
-from urllib.parse import parse_qs, urlencode, urlsplit
+from datetime import timedelta
+from urllib.parse import urlencode, urlsplit
 
-from .core import AI_RE, Item, UTC, canonical_url, clean, now, parse_time, stamp
+from .core import Item, clean, now, parse_time, stamp
 from .http import FetchError
 
 
@@ -100,140 +99,47 @@ def v2ex(client, start, end):
 
 def linux_do(client, start, end):
     try:
-        return parse_feed(client.get("https://linux.do/latest.rss"), "Linux.do"), "limited", "公开 RSS 仅含最近主题，不含私有版块；持续轮询仍可能漏帖"
-    except FetchError as rss_error:
-        try:
-            data = client.json("https://linux.do/latest.json")
-            items = []
-            for hit in data["topic_list"]["topics"]:
-                published = parse_time(hit.get("created_at"))
-                link = f"https://linux.do/t/topic/{int(hit['id'])}"
-                items.append(Item("Linux.do", str(hit["id"]), clean(hit["title"]), link, stamp(published) if published else "", "", link))
-            return items, "limited", "公开 latest.json 后备仅含最近主题；RSS 不可用"
-        except (FetchError, KeyError, TypeError):
-            try:
-                return linux_channel(client, start, end, str(rss_error))
-            except FetchError as exc:
-                raise FetchError(f"源站 RSS/JSON 不可用（{rss_error}），公开转发频道也不可用（{exc}）") from None
-
-
-def linux_channel(client, start, end, direct_error):
-    found = {}
-    valid_pages = 0
-    failures = []
-    for query in ("", "Claude", "GPT", "Gemini"):
-        url = "https://t.me/s/linux_do_channel"
-        if query:
-            url += "?" + urlencode({"q": query})
-        try:
-            page = client.get(url).decode("utf-8", errors="replace")
-        except FetchError as exc:
-            failures.append(str(exc))
-            continue
-        blocks = re.split(r'data-post="linux_do_channel/([0-9]+)"', page)
-        if len(blocks) == 1:
-            failures.append("未找到频道消息")
-            continue
-        parsed = 0
-        for message_id, block in zip(blocks[1::2], blocks[2::2]):
-            body = re.search(r'<div class="tgme_widget_message_text [^"]*"[^>]*>(.*?)</div>', block, re.S)
-            date = re.search(r'<time datetime="([^"]+)"', block)
-            if not body or not date:
-                continue
-            header = body[1].split("<br", 1)[0]
-            topic = re.search(r'<a href="https://linux[.]do/t/topic/([0-9]+)(?:/1)?"[^>]*>(.*?)</a>', header, re.S)
-            published = parse_time(date[1])
-            if not topic or not published:
-                continue
-            parsed += 1
-            if start <= published < end:
-                ident, title = topic.groups()
-                found[ident] = Item("Linux.do", "channel:" + ident, clean(title),
-                    "https://linux.do/t/topic/" + ident, stamp(published), clean(body[1]),
-                    "https://t.me/linux_do_channel/" + message_id, "telegram-relay")
-        if parsed:
-            valid_pages += 1
-        else:
-            failures.append("页面中没有可解析的主题链接和时间")
-    if not valid_pages:
-        raise FetchError(failures[0])
-    matched = [i for i in found.values() if AI_RE.search(i.title + " " + i.text)]
-    detail = f"源站 RSS 不可用（{direct_error}）。公开 Telegram 转发频道最近页及关键词页检出 {len(matched)} 条。按频道转发时间筛选，覆盖有限"
-    if failures:
-        detail += f"，{len(failures)} 个页面不可用"
-    return matched, "limited" if matched else "no_hits", detail
-
-
-def x_status(url):
-    # Bing 有时使用新闻跳转地址，但只有明确的 x/twitter 原帖链接才能入库。
-    parts = urlsplit(url)
-    if parts.hostname and parts.hostname.endswith("bing.com"):
-        url = parse_qs(parts.query).get("url", [url])[0]
-    url = canonical_url(url)
-    match = re.fullmatch(r"https?://x\.com/(?:[A-Za-z0-9_]+|i/web)/status/([0-9]{1,19})(?:\?.*)?", url)
-    if not match:
-        return None
-    ident = match[1]
-    published = datetime.fromtimestamp(((int(ident) >> 22) + 1288834974657) / 1000, UTC)
-    if not datetime(2010, 11, 4, tzinfo=UTC) <= published <= now() + timedelta(minutes=5):
-        return None
-    return ident, published, url.split("?")[0]
-
-
-X_POST_LINK = re.compile(r"https?://(?:www[.])?(?:x|twitter)[.]com/(?:[A-Za-z0-9_]+|i/web)/status/[0-9]{1,19}(?![0-9])", re.I)
-FOCUS_ACCOUNTS = {"openai", "openaidevs", "anthropicai", "claudeai", "claudedevs", "googledeepmind", "googleai", "geminiapp", "googleaidevs"}
-
-
-def x_public(client, start, end):
-    query = f'"https://x.com/" ("Claude" OR "Gemini" OR "OpenAI") in:body created:>={start.date()}'
-    params = urlencode({"q": query, "per_page": 50})
-    search = client.json("https://api.github.com/search/issues?" + params, headers={"Accept": "application/vnd.github+json"})
-    if not isinstance(search, dict) or not isinstance(search.get("items"), list):
-        raise FetchError("GitHub 公开引用索引响应异常")
-    candidates = {}
-    for issue in search["items"]:
-        for link in X_POST_LINK.findall(issue.get("body") or ""):
-            post = x_status(link)
-            if post and start <= post[1] < end:
-                candidates[post[0]] = post
-    ranked = sorted(candidates.values(), key=lambda p: (urlsplit(p[2]).path.split("/")[1].lower() in FOCUS_ACCOUNTS, p[1]), reverse=True)
-    items = []
-    errors = 0
-    for ident, published, link in ranked[:16]:
-        params = urlencode({"url": link, "omit_script": "1", "hide_thread": "1"})
-        try:
-            embed = client.json("https://publish.twitter.com/oembed?" + params)
-        except FetchError:
-            errors += 1
-            continue
-        verified = x_status(embed.get("url") or "") if isinstance(embed, dict) else None
-        paragraph = re.search(r"<p\b[^>]*>(.*?)</p>", embed.get("html", ""), re.S) if verified else None
-        if not paragraph or verified[0] != ident:
-            errors += 1
-            continue
-        text = clean(paragraph[1])
-        account = urlsplit(verified[2]).path.split("/")[1]
-        title = f"@{account} · {text[:160]}"
-        if text and AI_RE.search(title + " " + text):
-            items.append(Item("X", ident, title, verified[2], stamp(published), text, verified[2], "x-oembed"))
-    inspected = min(len(ranked), 16)
-    detail = f"GitHub 公开引用中发现 {len(ranked)} 条窗口内原帖，抽取 {inspected} 条，经 X oEmbed 核实且符合 AI 主题 {len(items)} 条。仅覆盖被引用的公开帖子"
-    if errors:
-        detail += f"，{errors} 条无法核实"
-    if inspected and errors == inspected:
-        raise FetchError(detail)
-    return items, "limited" if items else "no_hits", detail
+        entries = parse_feed(client.get("https://linux.do/latest.rss", official=True), "Linux.do")
+        items = [entry for entry in entries if urlsplit(entry.url)[:2] == ("https", "linux.do")
+                 and urlsplit(entry.url).path.startswith("/t/") and entry.published_at]
+        if not items:
+            raise FetchError("RSS 缺少带原发时间的 Linux.do 主题")
+        return items, "limited", "Linux.do 原站 RSS，仅覆盖最近公开主题"
+    except FetchError as exc:
+        rss_error = str(exc)
+    try:
+        data = client.json("https://linux.do/latest.json", official=True)
+        topics = data["topic_list"]["topics"]
+        if not isinstance(topics, list):
+            raise FetchError("原站 JSON 缺少主题列表")
+        items = []
+        for topic in topics:
+            published = parse_time(topic.get("created_at"))
+            if published:
+                ident = str(int(topic["id"]))
+                link = f"https://linux.do/t/topic/{ident}"
+                items.append(Item("Linux.do", ident, clean(topic["title"]), link, stamp(published), "", link))
+        if topics and not items:
+            raise FetchError("原站 JSON 缺少主题原发时间")
+        return items, "limited", "Linux.do 原站 latest.json，仅覆盖最近公开主题"
+    except (FetchError, TypeError, KeyError, ValueError) as exc:
+        detail = str(exc) if isinstance(exc, FetchError) else "原站 JSON 结构异常"
+        raise FetchError(f"Linux.do 原站 RSS（{rss_error}）和 JSON（{detail}）均未取得数据") from None
 
 
 def x(client, start, end):
     token = os.environ.get("X_BEARER_TOKEN", "").strip()
     if not token:
-        return x_public(client, start, end)
-    params = {"query": '(GPT OR ChatGPT OR OpenAI OR Claude OR Anthropic OR Gemini) -is:retweet', "start_time": stamp(max(start, now() - timedelta(days=6))), "end_time": stamp(min(end, now() - timedelta(seconds=15))), "max_results": 100, "tweet.fields": "created_at", "expansions": "author_id", "user.fields": "username"}
+        raise FetchError("X 官方搜索缺少 X_BEARER_TOKEN，需要具有 Recent Search 读取权限的应用")
+    params = {"query": '(GPT OR ChatGPT OR OpenAI OR Claude OR Anthropic OR Gemini) -is:retweet', "start_time": stamp(max(start, now() - timedelta(days=6))).replace("+00:00", "Z"), "end_time": stamp(min(end, now() - timedelta(seconds=15))).replace("+00:00", "Z"), "max_results": 100, "tweet.fields": "created_at", "expansions": "author_id", "user.fields": "username"}
     items = []
     for page in range(3):
         try:
-            data = client.json("https://api.x.com/2/tweets/search/recent?" + urlencode(params), headers={"Authorization": "Bearer " + token}, cache=False)
+            data = client.json("https://api.x.com/2/tweets/search/recent?" + urlencode(params), headers={"Authorization": "Bearer " + token}, cache=False, official=True)
+            if not isinstance(data, dict) or not isinstance(data.get("meta"), dict) or not isinstance(data["meta"].get("result_count"), int):
+                raise FetchError("X 官方搜索响应缺少结果计数")
+            if data["meta"]["result_count"] and not isinstance(data.get("data"), list):
+                raise FetchError("X 官方搜索响应缺少帖子列表")
             if data.get("errors"):
                 raise FetchError("X API 返回错误，请检查账号权限或额度")
             users = {u["id"]: u["username"] for u in data.get("includes", {}).get("users", [])}
@@ -249,8 +155,7 @@ def x(client, start, end):
         except FetchError as exc:
             if items:
                 return items, "limited", "X API 部分分页失败：" + str(exc)
-            fallback, status, detail = x_public(client, start, end)
-            return fallback, status, "X API 不可用：" + str(exc) + "；" + detail
+            raise FetchError("X 官方搜索不可用：" + str(exc)) from None
     return items, "limited", "X 官方 API 已达到 300 条分页上限，结果不完整"
 
 

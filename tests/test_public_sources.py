@@ -1,34 +1,67 @@
+import tempfile
+import urllib.request
 from datetime import timedelta
+from pathlib import Path
 from unittest import TestCase
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from news_fetch.core import now, stamp
-from news_fetch.sources import linux_channel, x_public
+from news_fetch.core import Item, now, stamp
+from news_fetch.db import Database
+from news_fetch.http import FetchError, SameOriginRedirect
+from news_fetch.sources import linux_do, x
 
 
-class PublicSourcesTests(TestCase):
-    def test_relay_uses_channel_date_and_original_topic(self):
-        end = now()
-        date = stamp(end - timedelta(hours=2))
+class OfficialSourcesTests(TestCase):
+    def test_linux_challenge_stops_at_original_site(self):
         client = Mock()
-        client.get.return_value = (f'<div data-post="linux_do_channel/5"><div class="tgme_widget_message_text js-message_text"><b>A</b> 在 <a href="https://linux.do/t/topic/123/1">Claude 更新</a> 中发帖<br/><pre>正文</pre></div><time datetime="{date}"></time></div>').encode()
-        items, status, _ = linux_channel(client, end - timedelta(days=1), end, "HTTP 403")
-        self.assertEqual(status, "limited")
-        self.assertEqual(len(items), 1)
-        self.assertEqual((items[0].url, items[0].discussion_url, items[0].provenance, items[0].published_at),
-                         ("https://linux.do/t/topic/123", "https://t.me/linux_do_channel/5", "telegram-relay", date))
-        self.assertEqual(linux_channel(client, end - timedelta(hours=1), end, "HTTP 403")[1], "no_hits")
+        client.get.side_effect = client.json.side_effect = FetchError("HTTP 403 Cloudflare 浏览器验证")
+        with self.assertRaisesRegex(FetchError, "Cloudflare"):
+            linux_do(client, now() - timedelta(days=1), now())
+        client.get.assert_called_once_with("https://linux.do/latest.rss", official=True)
+        client.json.assert_called_once_with("https://linux.do/latest.json", official=True)
 
-    def test_only_verified_in_window_x_post_supplies_content(self):
-        end = now()
-        def post(hours):
-            ts = (end - timedelta(hours=hours)).timestamp()
-            return "https://x.com/ClaudeDevs/status/" + str((int(ts * 1000) - 1288834974657) << 22)
-        live, old = post(1), post(48)
+    def test_missing_token_does_not_search_elsewhere(self):
         client = Mock()
-        client.json.side_effect = [{"items": [{"body": "invented " + live + " " + old}]},
-                                   {"url": live, "html": "<blockquote><p>Claude release</p></blockquote>"}]
-        items, status, _ = x_public(client, end - timedelta(days=1), end)
-        self.assertEqual(status, "limited")
-        self.assertEqual([(i.url, i.text) for i in items], [(live, "Claude release")])
-        self.assertEqual(client.json.call_count, 2)
+        with patch.dict("os.environ", {"X_BEARER_TOKEN": ""}), self.assertRaisesRegex(FetchError, "X_BEARER_TOKEN"):
+            x(client, now() - timedelta(days=1), now())
+        self.assertFalse(client.mock_calls)
+
+    def test_x_official_page_then_rate_limit_keeps_verified_posts(self):
+        client = Mock()
+        at = now()
+        client.json.side_effect = [
+            {"data": [{"id": "123", "created_at": stamp(at), "text": "Claude news", "author_id": "5"}],
+             "includes": {"users": [{"id": "5", "username": "ClaudeDevs"}]},
+             "meta": {"next_token": "more", "result_count": 1}},
+            FetchError("HTTP 429")]
+        with patch.dict("os.environ", {"X_BEARER_TOKEN": "test"}):
+            items, status, _ = x(client, at - timedelta(days=1), at + timedelta(seconds=1))
+        self.assertEqual((status, items[0].url, items[0].provenance), ("limited", "https://x.com/ClaudeDevs/status/123", "official-api"))
+        for call in client.json.call_args_list:
+            self.assertTrue(call.args[0].startswith("https://api.x.com/2/tweets/search/recent?"))
+            self.assertTrue(call.kwargs["official"])
+
+    def test_external_redirect_rejected_before_request(self):
+        req = urllib.request.Request("https://api.x.com/2/tweets/search/recent")
+        with self.assertRaises(FetchError):
+            SameOriginRedirect().redirect_request(req, None, 302, "", {}, "https://example.org/")
+
+    def test_legacy_indirect_rows_excluded_until_fetched_directly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db")
+            try:
+                at = now().replace(microsecond=0)
+                old = stamp(at - timedelta(hours=2))
+                original = stamp(at - timedelta(hours=1))
+                db.save([Item("X", "123", "Claude news", "https://x.com/A/status/123", old, provenance="x-oembed"),
+                         Item("Linux.do", "channel:42", "Claude news", "https://linux.do/t/topic/42", old, provenance="telegram-relay")])
+                with db.conn:
+                    db.conn.execute("INSERT INTO fetches(source,started_at,finished_at,status,count,detail) VALUES (?,?,?,?,?,?)",
+                                    ("X", old, old, "limited", 1, "legacy"))
+                self.assertFalse(db.items(at - timedelta(days=1), at))
+                self.assertFalse(db.fetches(at - timedelta(days=1), at))
+                db.save([Item("X", "123", "Claude news", "https://x.com/A/status/123", original, provenance="official-api")])
+                items = db.items(at - timedelta(days=1), at)
+                self.assertEqual([(i["source"], i["published_at"]) for i in items], [("X", original)])
+            finally:
+                db.conn.close()

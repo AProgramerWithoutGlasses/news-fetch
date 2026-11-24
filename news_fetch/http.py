@@ -17,19 +17,28 @@ class FetchError(Exception):
     pass
 
 
+class SameOriginRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urlsplit(req.full_url)[:2] != urlsplit(newurl)[:2]:
+            raise FetchError("官方接口返回跨站重定向")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 class HttpClient:
     def __init__(self, db, *, timeout=15, attempts=3, sleep=time.sleep):
         self.db, self.timeout, self.attempts, self.sleep = db, timeout, attempts, sleep
         self.deadline = time.monotonic() + 600
         self.host_times = {}
+        self.official_opener = urllib.request.build_opener(SameOriginRedirect())
 
-    def get(self, url, *, headers=None, cache=True):
+    def get(self, url, *, headers=None, cache=True, official=False):
         host = urlsplit(url).netloc
         cooldown_key = "cooldown:" + host
         cooldown = parse_time(self.db.get(cooldown_key))
         if cooldown and cooldown > now():
             raise FetchError("渠道处于服务端限流冷却期，下个采集周期再检查")
-        key = hashlib.sha256(url.encode()).hexdigest()
+        cache_url = "official:" + url if official else url
+        key = hashlib.sha256(cache_url.encode()).hexdigest()
         prior = self.db.cache_get(key) if cache else None
         request_headers = {"User-Agent": "news-fetch/0.1 (+https://github.com/AProgramerWithoutGlasses/news-fetch)", "Accept": "application/json, application/rss+xml, application/atom+xml, text/xml;q=0.9"}
         request_headers.update(headers or {})
@@ -48,7 +57,8 @@ class HttpClient:
             delay = 2 ** attempt + random.random()
             try:
                 req = urllib.request.Request(url, headers=request_headers)
-                with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                open_url = self.official_opener.open if official else urllib.request.urlopen
+                with open_url(req, timeout=self.timeout) as response:
                     body = response.read(4_000_001)
                     if len(body) > 4_000_000:
                         raise FetchError("响应超过 4 MB 上限")
@@ -58,6 +68,8 @@ class HttpClient:
             except urllib.error.HTTPError as exc:
                 if exc.code == 304 and prior:
                     return prior["body"]
+                if exc.headers.get("cf-mitigated") == "challenge":
+                    raise FetchError(f"HTTP {exc.code} Cloudflare 浏览器验证") from None
                 if exc.code not in (429, 500, 502, 503, 504):
                     raise FetchError(f"HTTP {exc.code}，需要检查访问权限或渠道状态") from None
                 retry = exc.headers.get("Retry-After", "")

@@ -10,10 +10,10 @@ Python 3.11+，仅使用标准库。SQLite 存储、Markdown/JSON/HTML 日报、
 | --- | --- | --- |
 | Hacker News | HN Algolia 按时间搜索 / 官方 Firebase API | 搜索索引可能滞后；每个关键词最多 3 页，官方后备最近 60 帖 |
 | V2EX | 公开 latest API / RSS | 仅最近帖子；高峰期可能漏帖，网络或权限可能阻断 |
-| Linux.do | 公开 latest RSS / latest.json / 公开 Telegram 转发频道 | 不含私有版块；仅最近主题；源站可能受访问验证限制，频道线索标明转发时间 |
-| X | 有凭据时官方 recent search / 无凭据时从 GitHub 公开议题和 PR 发现原帖，通过 X oEmbed 核实正文 | 无凭据仅收录被公开引用的帖子，每轮最多核实 16 条，可能无结果；官方每轮最多 300 条，不能保证全量 |
+| Linux.do | Linux.do 原站 latest.rss / latest.json | 仅最近公开主题。源站要求浏览器验证时记录失败 |
+| X | X API v2 Recent Search | 需要具备接口权限和可用额度的 Bearer Token。每轮最多 300 条 |
 
-不绕过验证码、不关闭 TLS 校验、不伪造已覆盖结果。X 搜索只接收 x.com/twitter.com 的原帖链接，用 status ID 核对发布时间；搜索摘录未经独立核实。Linux.do 频道线索按转发时间筛选，逐条标明。RSS 的更新时间不冒充首次发布时间。
+Linux.do 和 X 的发现、内容与发布时间都来自官方接口。日报只统计直接采集的记录和采集状态。
 
 ## 本地使用
 
@@ -66,7 +66,7 @@ Windows 可运行 `powershell -ExecutionPolicy Bypass -File scripts/install-wind
 
 在 `.env` 配置，环境变量优先；不要提交密钥：
 
-- `X_BEARER_TOKEN`：可选，需要 X recent search 权限；缺失时自动用公开搜索线索。
+- `X_BEARER_TOKEN`：X 渠道必需。在服务器的 `/opt/news-fetch/.env` 中配置，下一轮采集生效。
 - `NEWS_LLM_BASE_URL`、`NEWS_LLM_API_KEY`、`NEWS_LLM_MODEL`：均配置后使用 OpenAI 兼容 `/chat/completions` 生成中文标题与摘要。Base URL 应包含服务要求的 `/v1` 等前缀。仅提交精选条目的标题和文本给此服务。失败时保留原文，消息不会凭空补写。
 - `NEWS_POLL_MINUTES`：默认 20，最小 5。
 - `NEWS_DATA_DIR`、`NEWS_REPORT_DIR`：默认 `data`、`reports`。

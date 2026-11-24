@@ -12,7 +12,7 @@ from news_fetch.core import Item, UTC, canonical_url, latest_cutoff, now, parse_
 from news_fetch.db import Database
 from news_fetch.http import FetchError, HttpClient
 from news_fetch.report import build_report, deduplicate, webpage, write_report
-from news_fetch.sources import parse_feed, x_status
+from news_fetch.sources import parse_feed
 
 
 class PipelineTests(unittest.TestCase):
@@ -23,7 +23,7 @@ class PipelineTests(unittest.TestCase):
         self.db = Database(self.root / "db.sqlite3")
         self.addCleanup(self.db.conn.close)
 
-    def item(self, ident="1", published=None, source="X", title="Claude protocol update"):
+    def item(self, ident="1", published=None, source="Hacker News", title="Claude protocol update"):
         return Item(source, ident, title, "https://example.com/article?utm_source=test", stamp(published or now()), "Protocol details", "https://example.com/discussion")
 
     def test_cutoff_cst_before_and_after_eight(self):
@@ -45,7 +45,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIsNone(parse_time("2026-11-19T08:00:00"))
 
     def test_cross_source_canonical_dedup_keeps_references(self):
-        self.db.save([self.item(source="X"), self.item(source="V2EX")])
+        self.db.save([self.item(source="Hacker News"), self.item(source="V2EX")])
         items = deduplicate(self.db.items(now() - timedelta(hours=1), now() + timedelta(seconds=1)))
         self.assertEqual(len(items), 1)
         self.assertEqual(len(items[0]["references"]), 2)
@@ -57,13 +57,6 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(parse_feed(body, "V2EX")[0].published_at, "")
         with self.assertRaises(FetchError):
             parse_feed(b"<html><title>captcha</title></html>", "V2EX")
-
-    def test_x_status_timestamp_and_domain_validation(self):
-        moment = datetime(2026, 11, 18, tzinfo=UTC)
-        ident = (int(moment.timestamp() * 1000) - 1288834974657) << 22
-        result = x_status(f"https://twitter.com/openai/status/{ident}?utm_source=x")
-        self.assertEqual(result[1], moment)
-        self.assertIsNone(x_status(f"https://evil.example/openai/status/{ident}"))
 
     def test_source_failure_does_not_abort_other_sources(self):
         def failure(*args):

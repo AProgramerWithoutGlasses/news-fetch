@@ -23,7 +23,7 @@ def deduplicate(items):
         if group is None:
             group = dict(item)
             group["references"] = []
-            group["time_basis"] = "relay" if item["provenance"] == "telegram-relay" else "original"
+            group["time_basis"] = "original"
             group["category"], group["tags"], group["score"] = classify(item)
             group["id"] = hashlib.sha256(key.encode()).hexdigest()[:16]
             groups.append(group)
@@ -94,7 +94,7 @@ def build_report(db, end, *, use_llm=True):
     return {"window_start": stamp(start), "window_end": stamp(end), "generated_at": stamp(now()),
             "timezone": "Asia/Shanghai", "summary_status": summary_status, "coverage": coverage,
             "raw_count": len(raw), "unique_count": len(grouped), "selected_count": len(selected), "items": selected,
-            "notes": ["Linux.do 公开频道线索按转发时间筛选，其余按原帖发布时间筛选，窗口含起点、不含终点；搜索线索不等于已证实新闻。",
+            "notes": ["Linux.do 和 X 仅统计官方直接采集的原帖。按原帖发布时间筛选，窗口含起点、不含终点；搜索线索不等于已证实新闻。",
                       "同链接或相同标题合并；不同标题的同一事件可能仍重复。",
                       "新部署无法补回全部历史帖子；RSS/latest 来源和公开搜索均不保证全量覆盖。",
                       "有超过 60 分钟的成功采集间隔时标为采集不连续；这不是全网覆盖率指标。"]}
@@ -102,11 +102,6 @@ def build_report(db, end, *, use_llm=True):
 
 def local(value):
     return parse_time(value).astimezone(CST).strftime("%Y-%m-%d %H:%M")
-
-
-def item_time(item):
-    prefix = "频道转发于 " if item.get("time_basis") == "relay" else ""
-    return prefix + local(item["published_at"])
 
 
 def md_text(value):
@@ -122,7 +117,7 @@ def markdown(report):
             lines += ["本次未采集到符合条件的条目，请结合下方渠道状态判断；不代表没有更新。", ""]
         for item in items:
             lines += [f"### {md_text(item.get('title_zh') or item['title'])}", "",
-                      f"{' / '.join(item['tags'])} · {item_time(item)} · 社区消息/待核实", "",
+                      f"{' / '.join(item['tags'])} · {local(item['published_at'])} · 社区消息/待核实", "",
                       md_text(item.get("summary_zh") or item["text"][:500] or "来源未提供正文摘要，请阅读原帖。"), "",
                       f"[原文](<{item['url']}>) · " + " · ".join(f"[{r['source']}](<{r['url']}>)" for r in item["references"]), ""]
     lines += ["## 渠道状态", ""]
@@ -144,7 +139,7 @@ def webpage(report):
             cards.append("<p>未采集到符合条件的条目，请查看渠道状态。</p>")
         for i in matches:
             refs = " · ".join(f'<a href="{e(r["url"], quote=True)}" rel="noopener noreferrer">{e(r["source"])}</a>' for r in i["references"])
-            cards.append(f'<article><small>{e(" / ".join(i["tags"]))} · {item_time(i)} · 待核实</small><h3><a href="{e(i["url"], quote=True)}" rel="noopener noreferrer">{e(i.get("title_zh") or i["title"])}</a></h3><p>{e(i.get("summary_zh") or i["text"][:500] or "请阅读原帖。")}</p><footer>{refs}</footer></article>')
+            cards.append(f'<article><small>{e(" / ".join(i["tags"]))} · {local(i["published_at"])} · 待核实</small><h3><a href="{e(i["url"], quote=True)}" rel="noopener noreferrer">{e(i.get("title_zh") or i["title"])}</a></h3><p>{e(i.get("summary_zh") or i["text"][:500] or "请阅读原帖。")}</p><footer>{refs}</footer></article>')
     statuses = "".join(f'<li><strong>{e(c["source"])}</strong>：{e(c["status"])} · {c["window_items"]} 条 · {"持续采集" if c["continuous"] else "采集不连续"}<br>{e(c["detail"])}</li>' for c in report["coverage"])
     return f'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI 新闻与逆向动态</title><style>body{{font:16px/1.7 system-ui,sans-serif;background:#f5f6f8;color:#17232d;max-width:960px;margin:40px auto;padding:0 20px}}a{{color:#075f98;overflow-wrap:anywhere}}h1{{font-size:32px}}h2{{margin-top:36px}}h3{{margin:8px 0}}article,aside{{background:white;padding:22px;border:1px solid #dbe1e8;border-radius:12px;margin:18px 0}}small,footer{{color:#536478}}li{{margin-bottom:14px}}p{{overflow-wrap:anywhere}}</style><h1>AI 新闻与逆向动态</h1><p>北京时间 {local(report['window_start'])} — {local(report['window_end'])}</p><p>{e(report['summary_status'])}</p><p><a href="latest.md">Markdown</a> · <a href="latest.json">JSON</a> · <a href="health.json">运行状态</a></p><aside><h2>渠道覆盖</h2><ul>{statuses}</ul></aside>{''.join(cards)}<aside><ul>{''.join('<li>'+e(n)+'</li>' for n in report['notes'])}</ul><p>生成于 {local(report['generated_at'])} · 精选 {report['selected_count']} / 去重后 {report['unique_count']} 条</p></aside></html>'''
 

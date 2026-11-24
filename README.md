@@ -10,10 +10,10 @@ Python 3.11+，仅使用标准库。SQLite 存储、Markdown/JSON/HTML 日报、
 | --- | --- | --- |
 | Hacker News | HN Algolia 按时间搜索 / 官方 Firebase API | 搜索索引可能滞后；每个关键词最多 3 页，官方后备最近 60 帖 |
 | V2EX | 公开 latest API / RSS | 仅最近帖子；高峰期可能漏帖，网络或权限可能阻断 |
-| Linux.do | 公开 latest RSS / latest.json | 不含私有版块；仅最近主题；可能受访问验证限制 |
-| X | 有凭据时官方 recent search / 无凭据时 Bing RSS 公开搜索 | 无凭据仅索引线索，可能无结果；官方每轮最多 300 条，不能保证全量 |
+| Linux.do | 公开 latest RSS / latest.json / 公开 Telegram 转发频道 | 不含私有版块；仅最近主题；源站可能受访问验证限制，频道线索标明转发时间 |
+| X | 有凭据时官方 recent search / 无凭据时从 GitHub 公开议题和 PR 发现原帖，通过 X oEmbed 核实正文 | 无凭据仅收录被公开引用的帖子，每轮最多核实 16 条，可能无结果；官方每轮最多 300 条，不能保证全量 |
 
-不绕过验证码、不关闭 TLS 校验、不伪造已覆盖结果。X 搜索只接收 x.com/twitter.com 的原帖链接，用 status ID 核对发布时间；搜索摘录未经独立核实。未知时间的内容不进入 24 小时日报。RSS 的更新时间不冒充首次发布时间。
+不绕过验证码、不关闭 TLS 校验、不伪造已覆盖结果。X 搜索只接收 x.com/twitter.com 的原帖链接，用 status ID 核对发布时间；搜索摘录未经独立核实。Linux.do 频道线索按转发时间筛选，逐条标明。RSS 的更新时间不冒充首次发布时间。
 
 ## 本地使用
 

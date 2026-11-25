@@ -10,10 +10,10 @@ Python 3.11+，仅使用标准库。SQLite 存储、Markdown/JSON/HTML 日报、
 | --- | --- | --- |
 | Hacker News | HN Algolia 按时间搜索 / 官方 Firebase API | 搜索索引可能滞后；每个关键词最多 3 页，官方后备最近 60 帖 |
 | V2EX | 公开 latest API / RSS | 仅最近帖子；高峰期可能漏帖，网络或权限可能阻断 |
-| Linux.do | Linux.do 原站 latest.rss / latest.json | 仅最近公开主题。源站要求浏览器验证时记录失败 |
+| Linux.do | Firecrawl 读取官方 latest.rss，失败后直连官方 latest.rss / latest.json | 仅 RSS 或列表中的最近公开主题，高峰期可能漏帖 |
 | X | X API v2 Recent Search | 需要具备接口权限和可用额度的 Bearer Token。每轮最多 300 条 |
 
-Linux.do 和 X 的发现、内容与发布时间都来自官方接口。日报只统计直接采集的记录和采集状态。
+Linux.do 从官方订阅读取主题链接、正文摘录和原发时间。Firecrawl 每轮请求一次原始 RSS，校验响应地址和状态，并在入库时标记来源。直连 JSON 后备仅提供标题和原发时间。失败原因可在渠道状态中查看。
 
 ## 本地使用
 
@@ -67,6 +67,7 @@ Windows 可运行 `powershell -ExecutionPolicy Bypass -File scripts/install-wind
 在 `.env` 配置，环境变量优先；不要提交密钥：
 
 - `X_BEARER_TOKEN`：X 渠道必需。在服务器的 `/opt/news-fetch/.env` 中配置，下一轮采集生效。
+- `FIRECRAWL_API_KEY` 可选。默认使用 Firecrawl 免密钥额度，部分网络可能受限。配置自己的密钥后，每轮抓取会使用该账户额度。
 - `NEWS_LLM_BASE_URL`、`NEWS_LLM_API_KEY`、`NEWS_LLM_MODEL`：均配置后使用 OpenAI 兼容 `/chat/completions` 生成中文标题与摘要。Base URL 应包含服务要求的 `/v1` 等前缀。仅提交精选条目的标题和文本给此服务。失败时保留原文，消息不会凭空补写。
 - `NEWS_POLL_MINUTES`：默认 20，最小 5。
 - `NEWS_DATA_DIR`、`NEWS_REPORT_DIR`：默认 `data`、`reports`。

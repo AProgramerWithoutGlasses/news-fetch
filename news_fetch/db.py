@@ -71,7 +71,7 @@ class Database:
     def items(self, start, end):
         return [dict(row) for row in self.conn.execute("""SELECT * FROM items WHERE published_at>=? AND published_at<?
           AND (source != 'X' OR provenance='official-api')
-          AND (source != 'Linux.do' OR provenance='direct')
+          AND (source != 'Linux.do' OR provenance IN ('direct', 'firecrawl-rss'))
           ORDER BY published_at DESC""", (stamp(start), stamp(end)))]
 
     def fetches(self, start, end):

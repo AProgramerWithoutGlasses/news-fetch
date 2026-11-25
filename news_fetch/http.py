@@ -32,6 +32,19 @@ class HttpClient:
         self.official_opener = urllib.request.build_opener(SameOriginRedirect())
 
     def get(self, url, *, headers=None, cache=True, official=False):
+        return self._request(url, headers=headers, cache=cache, official=official)
+
+    def post_json(self, url, payload, *, headers=None, timeout=40):
+        body = self._request(url, headers={"Content-Type": "application/json", **(headers or {})},
+                             cache=False, official=True, data=json.dumps(payload).encode(),
+                             timeout=timeout, attempts=1)
+        try:
+            return json.loads(body)
+        except (ValueError, UnicodeDecodeError):
+            raise FetchError("响应不是有效 JSON") from None
+
+    def _request(self, url, *, headers, cache, official, data=None, timeout=None, attempts=None):
+        attempts = self.attempts if attempts is None else attempts
         host = urlsplit(url).netloc
         cooldown_key = "cooldown:" + host
         cooldown = parse_time(self.db.get(cooldown_key))
@@ -47,7 +60,7 @@ class HttpClient:
                 request_headers["If-None-Match"] = prior["etag"]
             if prior["modified"]:
                 request_headers["If-Modified-Since"] = prior["modified"]
-        for attempt in range(self.attempts):
+        for attempt in range(attempts):
             if time.monotonic() >= self.deadline:
                 raise FetchError("本轮采集已达到 10 分钟时限，延至下一轮")
             spacing = 0.5 - (time.monotonic() - self.host_times.get(host, 0))
@@ -56,9 +69,9 @@ class HttpClient:
             self.host_times[host] = time.monotonic()
             delay = 2 ** attempt + random.random()
             try:
-                req = urllib.request.Request(url, headers=request_headers)
+                req = urllib.request.Request(url, headers=request_headers, data=data)
                 open_url = self.official_opener.open if official else urllib.request.urlopen
-                with open_url(req, timeout=self.timeout) as response:
+                with open_url(req, timeout=timeout or self.timeout) as response:
                     body = response.read(4_000_001)
                     if len(body) > 4_000_000:
                         raise FetchError("响应超过 4 MB 上限")
@@ -84,14 +97,14 @@ class HttpClient:
                 if delay > 30:
                     self.db.set(cooldown_key, stamp(now() + timedelta(seconds=delay)))
                     raise FetchError(f"HTTP {exc.code}，服务端要求延后重试（{int(delay)} 秒）") from None
-                error = f"HTTP {exc.code}，重试后仍不可用"
+                error = f"HTTP {exc.code}，本次请求未成功"
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 reason = str(getattr(exc, "reason", exc))
                 # 不回显请求头、URL 查询参数或任何密钥。
                 error = "网络或 TLS 连接失败：" + reason[:160]
                 if "CERTIFICATE_VERIFY_FAILED" in reason:
                     raise FetchError("TLS 证书校验失败，已拒绝不安全连接") from None
-            if attempt + 1 < self.attempts:
+            if attempt + 1 < attempts:
                 self.sleep(delay)
         raise FetchError(error)
 

@@ -97,14 +97,50 @@ def v2ex(client, start, end):
     raise FetchError("API/RSS 均不可用：" + errors[0])
 
 
+LINUX_RSS = "https://linux.do/latest.rss"
+
+
+def linux_feed(body, provenance):
+    items = [entry for entry in parse_feed(body, "Linux.do")
+             if urlsplit(entry.url)[:2] == ("https", "linux.do")
+             and urlsplit(entry.url).path.startswith("/t/") and entry.published_at]
+    if not items:
+        raise FetchError("RSS 缺少带原发时间的 Linux.do 主题")
+    for entry in items:
+        entry.provenance = provenance
+    return items
+
+
+def firecrawl_linux_feed(client):
+    token = os.getenv("FIRECRAWL_API_KEY", "").strip()
+    result = client.post_json("https://api.firecrawl.dev/v2/scrape", {
+        "url": LINUX_RSS, "formats": ["rawHtml"], "maxAge": 0, "proxy": "basic", "timeout": 30000,
+    }, headers={"Authorization": "Bearer " + token} if token else {})
+    if not isinstance(result, dict) or result.get("success") is not True:
+        raise FetchError("Firecrawl 抓取失败")
+    data = result.get("data")
+    if not isinstance(data, dict) or not isinstance(data.get("metadata"), dict):
+        raise FetchError("Firecrawl 缺少原站响应信息")
+    meta = data["metadata"]
+    if meta.get("url") != LINUX_RSS or meta.get("sourceURL") != LINUX_RSS:
+        raise FetchError("Firecrawl 返回的来源与官方 RSS 地址不符")
+    if meta.get("statusCode") != 200:
+        code = meta.get("statusCode")
+        raise FetchError(f"原站 HTTP {code}" if isinstance(code, int) else "缺少原站 HTTP 状态")
+    if not isinstance(data.get("rawHtml"), str):
+        raise FetchError("Firecrawl 缺少原始 RSS 正文")
+    return linux_feed(data["rawHtml"].encode(), "firecrawl-rss")
+
+
 def linux_do(client, start, end):
     try:
-        entries = parse_feed(client.get("https://linux.do/latest.rss", official=True), "Linux.do")
-        items = [entry for entry in entries if urlsplit(entry.url)[:2] == ("https", "linux.do")
-                 and urlsplit(entry.url).path.startswith("/t/") and entry.published_at]
-        if not items:
-            raise FetchError("RSS 缺少带原发时间的 Linux.do 主题")
-        return items, "limited", "Linux.do 原站 RSS，仅覆盖最近公开主题"
+        items = firecrawl_linux_feed(client)
+        return items, "limited", "Firecrawl 读取 Linux.do 官方 RSS，仅覆盖最近公开主题"
+    except FetchError as exc:
+        firecrawl_error = str(exc)
+    try:
+        items = linux_feed(client.get(LINUX_RSS, official=True), "direct")
+        return items, "limited", f"Firecrawl 不可用（{firecrawl_error}）；原站 RSS 仅覆盖最近公开主题"
     except FetchError as exc:
         rss_error = str(exc)
     try:
@@ -121,10 +157,10 @@ def linux_do(client, start, end):
                 items.append(Item("Linux.do", ident, clean(topic["title"]), link, stamp(published), "", link))
         if topics and not items:
             raise FetchError("原站 JSON 缺少主题原发时间")
-        return items, "limited", "Linux.do 原站 latest.json，仅覆盖最近公开主题"
+        return items, "limited", f"Firecrawl（{firecrawl_error}）、RSS（{rss_error}）不可用；原站 latest.json 仅覆盖最近公开主题"
     except (FetchError, TypeError, KeyError, ValueError) as exc:
         detail = str(exc) if isinstance(exc, FetchError) else "原站 JSON 结构异常"
-        raise FetchError(f"Linux.do 原站 RSS（{rss_error}）和 JSON（{detail}）均未取得数据") from None
+        raise FetchError(f"Firecrawl（{firecrawl_error}）、原站 RSS（{rss_error}）、JSON（{detail}）均未取得数据") from None
 
 
 def x(client, start, end):

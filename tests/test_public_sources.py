@@ -8,12 +8,49 @@ from unittest.mock import Mock, patch
 from news_fetch.core import Item, now, stamp
 from news_fetch.db import Database
 from news_fetch.http import FetchError, SameOriginRedirect
-from news_fetch.sources import linux_do, x
+from news_fetch.sources import LINUX_RSS, firecrawl_linux_feed, linux_do, x
 
 
 class OfficialSourcesTests(TestCase):
+    def test_firecrawl_feed_reaches_report_with_original_time(self):
+        at = now().replace(microsecond=0)
+        rss = f"""<rss><channel><item><title>Claude</title><link>https://linux.do/t/topic/42</link>
+                  <pubDate>{stamp(at)}</pubDate><description>Original text</description></item>
+                  <item><link>https://example.org/t/42</link><pubDate>{stamp(at)}</pubDate></item>
+                  <item><link>https://linux.do/t/topic/77</link><updated>{stamp(at)}</updated></item>
+                  </channel></rss>"""
+        client = Mock()
+        client.post_json.return_value = {"success": True, "data": {"rawHtml": rss, "metadata": {
+            "url": LINUX_RSS, "sourceURL": LINUX_RSS, "statusCode": 200}}}
+        with patch.dict("os.environ", {"FIRECRAWL_API_KEY": ""}):
+            items, status, _ = linux_do(client, at - timedelta(days=1), at)
+        client.get.assert_not_called()
+        self.assertEqual(client.post_json.call_args.kwargs["headers"], {})
+        self.assertEqual(status, "limited")
+        self.assertEqual(len(items), 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db")
+            try:
+                self.assertEqual(db.save(items), 1)
+                row, = db.items(at, at + timedelta(seconds=1))
+                self.assertEqual((row["text"], row["published_at"], row["provenance"]),
+                                 ("Original text", stamp(at), "firecrawl-rss"))
+            finally:
+                db.conn.close()
+
+    def test_firecrawl_rejects_redirect_challenge_and_origin_error(self):
+        client = Mock()
+        for url, code, body in [("https://example.com/feed", 200, "<rss/>"),
+                                (LINUX_RSS, 403, "<rss/>"), (LINUX_RSS, 200, "<html/>")]:
+            with self.subTest(url=url, code=code):
+                client.post_json.return_value = {"success": True, "data": {"rawHtml": body,
+                    "metadata": {"url": url, "sourceURL": LINUX_RSS, "statusCode": code}}}
+                with self.assertRaises(FetchError):
+                    firecrawl_linux_feed(client)
+
     def test_linux_challenge_stops_at_original_site(self):
         client = Mock()
+        client.post_json.side_effect = FetchError("HTTP 429")
         client.get.side_effect = client.json.side_effect = FetchError("HTTP 403 Cloudflare 浏览器验证")
         with self.assertRaisesRegex(FetchError, "Cloudflare"):
             linux_do(client, now() - timedelta(days=1), now())

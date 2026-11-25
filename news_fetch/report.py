@@ -94,7 +94,7 @@ def build_report(db, end, *, use_llm=True):
     return {"window_start": stamp(start), "window_end": stamp(end), "generated_at": stamp(now()),
             "timezone": "Asia/Shanghai", "summary_status": summary_status, "coverage": coverage,
             "raw_count": len(raw), "unique_count": len(grouped), "selected_count": len(selected), "items": selected,
-            "notes": ["Linux.do 和 X 仅统计官方直接采集的原帖。按原帖发布时间筛选，窗口含起点、不含终点；搜索线索不等于已证实新闻。",
+            "notes": ["Linux.do 取自官方 RSS 或 JSON，RSS 可经 Firecrawl 获取。X 取自官方 API。按原帖发布时间筛选，窗口含起点、不含终点；搜索线索不等于已证实新闻。",
                       "同链接或相同标题合并；不同标题的同一事件可能仍重复。",
                       "新部署无法补回全部历史帖子；RSS/latest 来源和公开搜索均不保证全量覆盖。",
                       "有超过 60 分钟的成功采集间隔时标为采集不连续；这不是全网覆盖率指标。"]}
